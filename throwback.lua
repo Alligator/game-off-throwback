@@ -8,8 +8,9 @@ SPR_FINISH = 8
 SPR_0 = 224
 SPR_MID_BG = 64
 
-SFX_CHANNEL_CAR = 2
-SFX_CHANNEL_MISC = 3
+SFX_CAR_CHANNEL = 2
+SFX_CHANNEL = 3
+SFX_CRASH = 4
 
 PICKUP_COLLECTED_TIMER = 60
 
@@ -48,7 +49,7 @@ driveTextCounter = 0
 car = {
     maxSpeed=80,
     maxAccel=0.5,
-    maxTurnAccel = 0.25,
+    maxTurnAccel = 0.2,
     brakeAccel=-1.5,
 
     -- current state
@@ -61,6 +62,8 @@ car = {
     accelerating=false,
     braking=false,
     curSeg=nil,
+    crashed=false,
+    playedCrashSfx=false,
     paletteSwap={},
 
     update=function(self)
@@ -103,7 +106,7 @@ car = {
         end
 
         if self.curSeg != nil then
-            self.xpos += -self.curSeg.seg.dir * (self.speed / self.maxSpeed) * 2
+            self.xpos += -self.curSeg.seg.dir * ((self.speed / self.maxSpeed) * self.curSeg.seg.angle / 20)
         end
 
         -- off track
@@ -114,6 +117,12 @@ car = {
 
             self.xpos = max(min(self.xpos, 152), -42)
         end
+
+        if self.crashed and not self.playedCrashSfx then
+            sfx(SFX_CRASH, SFX_CHANNEL)
+            self.playedCrashSfx = true
+        end
+        if not self.crashed then self.playedCrashSfx = false end
     end,
 
     stop=function(self, x)
@@ -133,20 +142,20 @@ timer = 0
 powerups = {}
 timePowerupSpawned = false
 
+attractMusicSpeed = peek(0x3200 + (68 * 5) + 65)
+
 function _init()
     cls()
+    music(1)
 end
 
 function _draw()
     cls()
 
-    drawBackground()
     if gameState == STATE_NOT_STARTED then
-        drawRoad()
-        drawCar()
         drawAttract()
     elseif gameState == STATE_DRIVING then
-        sfx(0, SFX_CHANNEL_CAR)
+        drawBackground()
         drawRoad()
         drawCar()
         drawCollectedPowerups()
@@ -161,11 +170,9 @@ function _draw()
         end
         drawTimer()
     elseif gameState == STATE_GAME_OVER then
-        drawRoad()
-        drawCar()
         drawGameOverText()
     else
-        sfx(-1, 0)
+        sfx(-1)
         drawFinishText()
     end
 
@@ -178,6 +185,7 @@ function _update()
     if gameState == STATE_NOT_STARTED then
         updateAttract()
     elseif gameState == STATE_DRIVING then
+        sfx(0, SFX_CAR_CHANNEL)
         if eventFsm == nil then
             eventFsm = makeEventFsm()
         end
@@ -214,7 +222,7 @@ function updateTimer()
     timer -= 1/30
     if timer <= 0 then
         gameState = STATE_GAME_OVER
-        sfx(-1, SFX_CHANNEL_CAR)
+        sfx(-1, SFX_CAR_CHANNEL)
     elseif timer < 15 and not timePowerupSpawned then
         timePowerupSpawned = true
     end
@@ -264,6 +272,10 @@ function makeCigs()
 end
 
 function updateAttract()
+    -- speed = 36, 36 ticks per beat. 2 bars of 3/4, 12 beats
+    if stat(26) >= (attractMusicSpeed * 12) - 1  then
+        music(1)
+    end
     if btn(4) then
         gameState = STATE_DRIVING
         timer = INIT_TIMER
@@ -302,6 +314,7 @@ roadLineOffsets = {}
 
 function drawRoad()
     local curSeg = car.curSeg
+    car.crashed = false -- what a terrible place to do this
 
     for y = 128 - ROAD_HEIGHT, 128 do
         local z = abs(-64 / (y - 64))
@@ -315,7 +328,7 @@ function drawRoad()
         if curSeg != nil and curSeg.seg.dir != SEG_STRAIGHT then
             local curveScale = 1 - abs((curSeg.segPos - (curSeg.seg.length / 2)) / (curSeg.seg.length / 2))
             local distScale = 1 - ((y - (128 - ROAD_HEIGHT)) / ROAD_HEIGHT)
-            curveOffset = sin(-curSeg.seg.dir * curveScale / 4 * distScale / (scale * 16)) * distScale * 25
+            curveOffset = sin(-curSeg.seg.dir * curveScale / 4 * distScale / (scale * 16)) * distScale * curSeg.seg.angle
         end
 
         roadLineOffsets[y] = { curveOffset = curveOffset, skew = skew }
@@ -395,6 +408,7 @@ function drawAndCheckHazard(hazard, dx, dy, dw, dh, fliph, isLeft)
         end
         if car:checkCollision(xCol) then
             car:stop()
+            car.crashed = true
         end
     end
 end
@@ -500,8 +514,49 @@ function drawBigNumber(num, x, y)
 end
 
 function drawAttract()
-    printShadowed('press z to start', 64, 42, 9)
-    printShadowed('Z: ACCELERATE X: BRAKE', 64, 50, 9)
+    local roadY = 42
+    local logoY = 32
+    
+    line(64, roadY - 16, 0, roadY + 48, 8)
+    line(63, roadY - 16, -1, roadY + 48, 8)
+
+    line(64, roadY - 16, 128, roadY + 48, 8)
+    line(65, roadY - 16, 129, roadY + 48, 8)
+
+    -- 70s
+    sspr(0, 80, 28, 16, 31, logoY)
+    -- dad
+    sspr(29, 80, 33, 16, 64, logoY)
+    
+    local drvX = 32
+    local kern = 4
+    local width = 10
+    pal(7, 9)
+    -- d
+    sspr(102, 64, 10, 16, drvX, logoY + 19)
+    drvX += width + kern - 1
+    -- r
+    sspr(91, 64, 10, 16, drvX, logoY + 19)
+    drvX += width + kern
+    -- i
+    sspr(69, 64, 3, 16, drvX, logoY + 19)
+    drvX += 3 + kern
+    -- v
+    sspr(69, 64, 10, 16, drvX, logoY + 19)
+    drvX += width + kern - 1
+    -- i
+    sspr(69, 64, 3, 16, drvX, logoY + 19)
+    drvX += 3 + kern
+    -- n
+    sspr(113, 64, 10, 16, drvX, logoY + 19)
+    drvX += width + kern
+    -- '
+    rect(drvX - kern + 1, logoY + 19, drvX - kern + 2, logoY + 21, 9)
+    pal()
+
+    local textY = 84
+    printShadowed('press z to start', 64, textY, getFlashingCol())
+    printShadowed('Z: ACCELERATE X: BRAKE', 64, textY + 10, 9)
 end
 
 function drawBackground()
@@ -532,7 +587,7 @@ function drawFinishText()
 end
 
 function drawDriveText()
-    local width = 36
+    local width = 32
     local height = 10
     wigglySspr(38, 96, width, height, 64 - width/2, 42)
 end
@@ -607,31 +662,32 @@ function wigglySspr(sx, sy, sw, sh, dx, dy)
 end
 
 function generateTrack(segCount)
-    -- local segCount = 10 + rnd(10)
     local track = {}
     for i = 1, segCount do
         -- don't repeat the same anything twice in a row
         local newSeg
         if #track == 0 then
-            newSeg = createSeg(i, 100 + flr(rnd(100)), SEG_STRAIGHT)
+            newSeg = createSeg(i, 100 + flr(rnd(100)), SEG_STRAIGHT, 0)
         else
             local prevSeg = track[#track]
             -- prefer curve if straight, prefer straight if curve
             local shouldChangeCurve = 75 > rnd(100)
             local nextDir = prevSeg.dir
+            local nextAngle = rnd(50) + 10
             if shouldChangeCurve then
                 if prevSeg.dir != SEG_STRAIGHT then
                     nextDir = 0
+                    nextAngle = 0
                 else
                     local r = rnd(100)
                     nextDir = (r <= 50 and SEG_LEFT or SEG_RIGHT)
                 end
             end
-            newSeg = createSeg(i, 100 + flr(rnd(250)), nextDir)
+            newSeg = createSeg(i, 100 + flr(rnd(250)), nextDir, nextAngle)
         end
         add(track, newSeg)
     end
-    add(track, createSeg(segCount + 1, 2, 0))
+    add(track, createSeg(segCount + 1, 2, 0, 0))
     track[#track].isFinish = true
     return addHazards(track)
 end
@@ -639,39 +695,41 @@ end
 -- for real why is lua so bad
 HAZARD_NAMES = {'lamp', 'turnSign'}
 HAZARDS = {
+    turnSign = { -- this HAS to be first
+        sx = 16,
+        sy = 32,
+        width = 16,
+        height = 32,
+        palt = 11,
+    },
     lamp = {
         sx = 8,
         sy = 32,
         width = 8,
         height = 32
     },
-    turnSign = {
-        sx = 16,
-        sy = 32,
-        width = 16,
-        height = 32,
-        palt = 11,
-    }
 }
 
 function addHazards(track)
     for seg in all(track) do
-        if rnd(10) < 10 then
-            local amount = flr(rnd(seg.length/10))
-            local name = HAZARD_NAMES[flr(rnd(#HAZARD_NAMES)) + 1]
-            if (name == 'turnSign' and seg.dir != SEG_STRAIGHT) or name != 'turnSign' then
-                seg.hazards = { name }
-            end
+        local sharpness = (seg.angle * 2) / seg.length
+        if seg.dir != SEG_STRAIGHT and sharpness > 0.6 then
+            seg.hazards = { 'turnSign' }
+        else
+            -- local name = HAZARD_NAMES[flr(rnd(#HAZARD_NAMES))] -- skip the first one
+            local name = 'lamp' -- whatever this will work when #HAZARDS is > 2
+            seg.hazards = { name }
         end
     end
     return track
 end
 
-function createSeg(id, length, direction)
+function createSeg(id, length, direction, angle)
     return {
         id=id,
         length=length,
         dir=direction,
+        angle=angle,
         hazards={},
     }
 end
@@ -774,7 +832,7 @@ function makeEventFsm()
     local fsm = {}
 
     fsm.state= EVT_STATE_IDLE
-    fsm.timer = 100 + rnd(100)
+    fsm.timer = 200 + rnd(100)
     fsm.frames = 1
     fsm.eventCounter = 0
 
