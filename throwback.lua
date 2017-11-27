@@ -3,6 +3,8 @@ PI = 3.14159
 ROAD_HEIGHT = 58
 INIT_TIMER = 60
 
+DRIVE_TEXT_TIMER = 30
+
 SPR_ROAD = 0
 SPR_FINISH = 8
 SPR_0 = 224
@@ -13,6 +15,7 @@ SFX_CHANNEL = 3
 SFX_CRASH = 4
 
 PICKUP_COLLECTED_TIMER = 60
+GAME_OVER_TIMER = 90
 
 CIG_FRAMES = {
     { sx = 64, sy = 0, width = 9, height = 16, offset = 0 },
@@ -31,20 +34,40 @@ SEG_STRAIGHT = 0
 SEG_LEFT = -1
 
 SCENES = {
-    { pos = 0, pal = {} },
-    { pos = 2000, pal = { [3] = 2, [12] = 14 } },
-    { pos = 4000, pal = { [3] = 5, [12] = 1 } },
+    {
+        pos = 0,
+        pal = {},
+        hazards = { 'corn', 'sign' },
+    },
+    {
+        pos = 2000,
+        pal = { [3] = 15 },
+        hazards = { 'cactus', 'cactus', 'sign' },
+    },
+    {
+        pos = 4000,
+        pal = { [3] = 4, [12] = 2 },
+        hazards = { 'cactus', 'lamp', 'sign' },
+    },
+    {
+        pos = 5000,
+        pal = { [3] = 1, [12] = 0 },
+        hazards = { 'building' },
+    },
 }
 
 -- uh oh it's a state machine
-STATE_DRIVING = 0
-STATE_FINISHED = 1
-STATE_NOT_STARTED = 2
+STATE_NOT_STARTED = 0
+STATE_DRIVING = 1
+STATE_FINISHED = 2
 STATE_GAME_OVER = 3
 
 gameState = STATE_NOT_STARTED
 frame = 0
-driveTextCounter = 0
+driveTextTimer = 0
+gameOverTimer = 0
+currentScene = SCENES[1]
+trackOffset = 0
 
 car = {
     maxSpeed=80,
@@ -138,9 +161,8 @@ car = {
 updateq = {}
 
 eventFsm = nil
-timer = 0
+timer = INIT_TIMER
 powerups = {}
-timePowerupSpawned = false
 
 attractMusicSpeed = peek(0x3200 + (68 * 5) + 65)
 
@@ -153,22 +175,26 @@ function _draw()
     cls()
 
     if gameState == STATE_NOT_STARTED then
-        drawAttract()
+        if driveTextTimer >= DRIVE_TEXT_TIMER/2 then
+            drawDriveText()
+        else
+            drawAttract()
+        end
     elseif gameState == STATE_DRIVING then
         drawBackground()
         drawRoad()
         drawCar()
         drawCollectedPowerups()
 
-        if driveTextCounter < 100 then
+        if driveTextTimer > 0 then
             drawDriveText()
-            driveTextCounter += 1
         end
 
         if eventFsm != nil then
             eventFsm.draw()
         end
         drawTimer()
+        drawSpeed()
     elseif gameState == STATE_GAME_OVER then
         drawGameOverText()
     else
@@ -183,7 +209,16 @@ function _update()
     car.curSeg = getSeg(track, car.pos, true)
 
     if gameState == STATE_NOT_STARTED then
-        updateAttract()
+        if driveTextTimer > 0 then
+            if driveTextTimer == DRIVE_TEXT_TIMER/2 then
+                gameState = STATE_DRIVING
+                timer = INIT_TIMER
+                music(0)
+            end
+            driveTextTimer -= 1
+        else
+            updateAttract()
+        end
     elseif gameState == STATE_DRIVING then
         sfx(0, SFX_CAR_CHANNEL)
         if eventFsm == nil then
@@ -191,12 +226,18 @@ function _update()
         end
         updateTimer()
         updateCar()
-        updatePowerUps()
-        eventFsm.update()
+        if gameOverTimer == 0 then
+            updatePowerUps()
+            eventFsm.update()
+        end
+
+        if driveTextTimer > 0 then
+            driveTextTimer -= 1
+        end
 
         -- generate more track if we're near the end
         if car.curSeg and car.curSeg.seg == track[#track - 1] then
-            local newTrack = generateTrack(10)
+            local newTrack = generateTrack(3)
             local offset = #track
             track[#track].isFinish = false
             for i = 1, #newTrack do
@@ -204,6 +245,11 @@ function _update()
             end
         end
 
+        for scene in all(SCENES) do
+            if car.pos > scene.pos then
+                currentScene = scene
+            end
+        end
     elseif gameState == STATE_GAME_OVER then
         -- if btnp(4) then
         --     run()
@@ -219,12 +265,16 @@ end
 
 function updateTimer()
     -- just gonna be lazy and count on 30 fps updates
-    timer -= 1/30
-    if timer <= 0 then
+    if gameOverTimer > 1 then
+        gameOverTimer -= 1
+    elseif gameOverTimer == 1 then
         gameState = STATE_GAME_OVER
         sfx(-1, SFX_CAR_CHANNEL)
-    elseif timer < 15 and not timePowerupSpawned then
-        timePowerupSpawned = true
+    elseif timer <= 0 then
+        gameOverTimer = GAME_OVER_TIMER
+        timer = 0
+    else
+        timer -= 1/30
     end
 end
 
@@ -239,7 +289,7 @@ function updatePowerUps()
             if pup.collectedTimer == 0 then
                 del(powerups, pup)
             else
-                pup.collectedTimer -= 1
+                pup.collectedTimer -= 2
             end
         elseif pup.pos - car.pos < 10 then
             local pupX = pup.xpos + 64 + (pup.anim[1].width/2)
@@ -277,13 +327,27 @@ function updateAttract()
         music(1)
     end
     if btn(4) then
-        gameState = STATE_DRIVING
-        timer = INIT_TIMER
-        music(0)
+        driveTextTimer = DRIVE_TEXT_TIMER
+        music(-1)
     end
 end
 
 function updateCar()
+    local rpm = (car.speed % (car.maxSpeed/3 + 1)) + car.speed / 5
+    poke(0x3200, bor(rpm * 0.45, 0x40))
+    poke(0x3200 + 1, 0x7)
+    poke(0x3200 + 2, bor(rpm * 0.65, 0xc0))
+    poke(0x3200 + 3, 0x4)
+
+    add(updateq, car)
+
+    if gameOverTimer > 0 then
+        car.accelerating = false
+        car.braking = true
+        car.direction = 0
+        return
+    end
+
     car.accelerating = btn(4)
     car.braking = btn(5)
 
@@ -298,16 +362,6 @@ function updateCar()
     if car.curSeg == nil or car.curSeg.seg.isFinish then
         gameState = STATE_FINISHED
     end
-
-    rpm = (car.speed % (car.maxSpeed/3 + 1)) + car.speed / 5
-    poke(0x3200, bor(rpm * 0.45, 0x40))
-    poke(0x3200 + 1, 0x7)
-    poke(0x3200 + 2, bor(rpm * 0.65, 0xc0))
-    poke(0x3200 + 3, 0x4)
-
-    curSeg = getCu
-
-    add(updateq, car)
 end
 
 roadLineOffsets = {}
@@ -349,8 +403,8 @@ function drawRoad()
         local nproj = car.pos + (abs(-64 / (y - 65))) * 8
         if ySeg != nil then
             for name in all(ySeg.seg.hazards) do
-                local density = 32
                 local hazard = HAZARDS[name]
+                local density = hazard.density
                 if proj % density < pproj % density and proj % density < nproj % density then
                     local xpos1 = (width/2) + 64
                     local xpos2 = (width/2) - 64
@@ -396,7 +450,23 @@ function drawRoad()
 end
 
 function drawAndCheckHazard(hazard, dx, dy, dw, dh, fliph, isLeft)
+    if hazard.heightScale != nil then
+        dy -= dh * (hazard.heightScale - 1)
+        dh *= hazard.heightScale
+    end
+    if hazard.widthScale != nil then
+        if not isLeft then
+            dx -= dw * (hazard.widthScale - 1)
+        end
+        dw *= hazard.widthScale
+    end
     sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx, dy, dw, dh, fliph)
+    if hazard.double and isLeft then
+        sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx + dw + 2, dy, dw, dh, fliph)
+    elseif hazard.double and not isLeft then
+        sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx - dw - 2, dy, dw, dh, fliph)
+    end
+    -- only check the one closest to the road
     if dy + dh >= 110 then
         local x = -8
         if isLeft then
@@ -472,18 +542,25 @@ function drawCar()
     car.paletteSwap={}
 end
 
+function drawSpeed()
+    -- sspr(0, 120, 26, 8, 2, 2)
+    drawBigNumberShadowed(flr(car.speed), 18, 114, 1)
+    printShadowed('MPH', 26, 113, 7)
+    -- print(car.speed, 0, 0, 2)
+end
+
 function drawTimer()
     drawBigNumberShadowed(flr(timer), 64, 6)
 end
 
-function drawBigNumberShadowed(num, x, y)
+function drawBigNumberShadowed(num, x, y, align)
     pal(7, 2)
-    drawBigNumber(num, x, y+1)
+    drawBigNumber(num, x, y+1, align)
     pal()
-    drawBigNumber(num, x, y)
+    drawBigNumber(num, x, y, align)
 end
 
-function drawBigNumber(num, x, y)
+function drawBigNumber(num, x, y, align)
     -- 2.1 precision
     local decimal = false
     local width = 8
@@ -492,10 +569,15 @@ function drawBigNumber(num, x, y)
     end
     if flr(num) != num then
         decimal = true
-        width += 11
+        width += 22
     end
 
     local curX = x - width/2
+    if align == -1 then
+        curX = x
+    elseif align == 1 then
+        curX = x - width
+    end
     if num >= 10 then
         local d1 = flr(num / 10)
         spr(SPR_0 + d1, curX, y)
@@ -506,10 +588,13 @@ function drawBigNumber(num, x, y)
     curX += 9
 
     if decimal then
-        local d3 = (num - flr(num)) * 10
+        local d3 = flr((num - flr(num)) * 10)
+        local d4 = flr((num - flr(num)) * 100 + 0.1) % 10
         pset(curX, y + 7, 7)
         curX += 2
         spr(SPR_0 + d3, curX, y)
+        curX += 8
+        spr(SPR_0 + d4, curX, y)
     end
 end
 
@@ -560,13 +645,6 @@ function drawAttract()
 end
 
 function drawBackground()
-    local currentScene
-    for scene in all(SCENES) do
-        if car.pos > scene.pos then
-            currentScene = scene
-        end
-    end
-
     if currentScene != nil then
         for k, v in pairs(currentScene.pal) do
             pal(k, v)
@@ -604,7 +682,7 @@ function drawGameOverText()
     wigglySspr(0, 64, width, height, 64 - width/2, y + height + 1)
     pal()
 
-    local miles = flr(car.pos / 100) / 10
+    local miles = car.pos / 5400
     local droveY = 62
     local boxWidth = 72
     local boxMargin = (128-boxWidth)/2
@@ -663,6 +741,7 @@ end
 
 function generateTrack(segCount)
     local track = {}
+
     for i = 1, segCount do
         -- don't repeat the same anything twice in a row
         local newSeg
@@ -687,13 +766,11 @@ function generateTrack(segCount)
         end
         add(track, newSeg)
     end
-    add(track, createSeg(segCount + 1, 2, 0, 0))
-    track[#track].isFinish = true
     return addHazards(track)
 end
 
 -- for real why is lua so bad
-HAZARD_NAMES = {'lamp', 'turnSign'}
+-- HAZARD_NAMES = {'turnSign', 'lamp', 'corn', 'cactus', 'sign'}
 HAZARDS = {
     turnSign = { -- this HAS to be first
         sx = 16,
@@ -701,25 +778,70 @@ HAZARDS = {
         width = 16,
         height = 32,
         palt = 11,
+        density = 32,
     },
     lamp = {
         sx = 8,
         sy = 32,
         width = 8,
-        height = 32
+        height = 32,
+        density = 64,
+    },
+    corn = {
+        sx = 32,
+        sy = 32,
+        width = 16,
+        height = 32,
+        density = 16,
+        double = true,
+    },
+    cactus = {
+        sx = 48,
+        sy = 32,
+        width = 16,
+        height = 32,
+        density = 32,
+    },
+    sign = {
+        sx = 64,
+        sy = 32,
+        width = 16,
+        height = 32,
+        density = 64,
+    },
+    building = {
+        sx = 80,
+        sy = 32,
+        width = 16,
+        height = 32,
+        density = 16,
+        heightScale = 4,
+        widthScale = 2,
+        double = true,
     },
 }
 
 function addHazards(track)
+    local pos = trackOffset
     for seg in all(track) do
         local sharpness = (seg.angle * 2) / seg.length
         if seg.dir != SEG_STRAIGHT and sharpness > 0.6 then
             seg.hazards = { 'turnSign' }
         else
-            -- local name = HAZARD_NAMES[flr(rnd(#HAZARD_NAMES))] -- skip the first one
-            local name = 'lamp' -- whatever this will work when #HAZARDS is > 2
-            seg.hazards = { name }
+            local hazardNames = nil
+            for scene in all(SCENES) do
+                if car.pos > scene.pos then
+                    hazardNames = scene.hazards
+                end
+            end
+
+            if hazardNames then
+                local name = hazardNames[flr(rnd(#hazardNames)) + 1] -- skip the first one
+                seg.hazards = { name }
+            end
         end
+        pos += seg.length
+        printTable(seg, printh)
     end
     return track
 end
@@ -992,4 +1114,3 @@ function formatTable(tbl)
 end
 
 track = generateTrack(4)
-trackOffset = 0
