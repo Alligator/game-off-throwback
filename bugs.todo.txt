@@ -1,0 +1,15 @@
+x pickup detection is weird/inconsistent
+x the beer event always moves you to the right if you fail
+stuff is still flickery
+x transition from the title to in game is still ropey
+x signs aren't being placed on sharp curves - seems to favour short corners?
+speed is hard to read sometimes
+too easy to get more time
+game ending when an event failure is happening might get weird - seems fine, the FSM for events just stops updating, could stop drawing it?
+events should change as time progresses
+arrows are hard to read against the hell background
+need some better last chances to get time
+can't reset
+need some sort of indication that a time powerup is coming
+add a text notification when you hit stuff "dang building!!", "dang cactus!!"
+timer flashes something other than 0 when it runs out

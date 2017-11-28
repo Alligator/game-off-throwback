@@ -3,7 +3,15 @@ PI = 3.14159
 ROAD_HEIGHT = 58
 INIT_TIMER = 60
 
-DRIVE_TEXT_TIMER = 30
+DRIVE_TEXT_TIMER = 40
+
+-- uh oh it's a state machine
+STATE_NOT_STARTED = 0
+STATE_DRIVING = 1
+STATE_FINISHED = 2
+STATE_GAME_OVER = 3
+
+gameState = STATE_NOT_STARTED
 
 SPR_ROAD = 0
 SPR_FINISH = 8
@@ -34,6 +42,7 @@ SEG_STRAIGHT = 0
 SEG_LEFT = -1
 
 SCENES = {
+    -- pal, sky = 12, ground = 3
     {
         pos = 0,
         pal = {},
@@ -52,25 +61,41 @@ SCENES = {
     {
         pos = 5000,
         pal = { [3] = 1, [12] = 0 },
-        hazards = { 'building' },
+        hazards = { 'building', 'neon', 'lamp' },
+    },
+    {
+        pos = 6400,
+        pal = { [3] = 1, [12] = 0 },
+        hazards = { 'building', 'neon', 'lamp' },
+    },
+    {
+        pos = 6500,
+        pal = {
+            [3] = 10,--function() return getFlashingCol(10, 9, 0.5) end,
+            [12] = 8,
+        },
+        floorSspr = 32,
+        hazards = { 'corpse', 'fire', 'not_doomguy' },
     },
 }
 
--- uh oh it's a state machine
-STATE_NOT_STARTED = 0
-STATE_DRIVING = 1
-STATE_FINISHED = 2
-STATE_GAME_OVER = 3
-
-gameState = STATE_NOT_STARTED
 frame = 0
 driveTextTimer = 0
 gameOverTimer = 0
 currentScene = SCENES[1]
 trackOffset = 0
+totalSegsGenerated = 0
+
+updateq = {}
+eventFsm = nil
+
+timer = INIT_TIMER
+powerups = {}
+attractMusicSpeed = peek(0x3200 + (68 * 5) + 65)
+
 
 car = {
-    maxSpeed=80,
+    maxSpeed=90,
     maxAccel=0.5,
     maxTurnAccel = 0.2,
     brakeAccel=-1.5,
@@ -158,14 +183,6 @@ car = {
     end,
 }
 
-updateq = {}
-
-eventFsm = nil
-timer = INIT_TIMER
-powerups = {}
-
-attractMusicSpeed = peek(0x3200 + (68 * 5) + 65)
-
 function _init()
     cls()
     music(1)
@@ -176,7 +193,7 @@ function _draw()
 
     if gameState == STATE_NOT_STARTED then
         if driveTextTimer >= DRIVE_TEXT_TIMER/2 then
-            drawDriveText()
+            drawReadyText()
         else
             drawAttract()
         end
@@ -201,6 +218,8 @@ function _draw()
         sfx(-1)
         drawFinishText()
     end
+
+    print(stat(1), 0, 0, 7)
 
     frame += 1
 end
@@ -292,7 +311,8 @@ function updatePowerUps()
                 pup.collectedTimer -= 2
             end
         elseif pup.pos - car.pos < 10 then
-            local pupX = pup.xpos + 64 + (pup.anim[1].width/2)
+            -- don't /2 becuase the pickup is scaled up by 2
+            local pupX = pup.xpos + 64 + (pup.anim[1].width)
             if car:checkCollision(pupX) then
                 pup:onPickup()
                 pup.collected = true
@@ -387,6 +407,17 @@ function drawRoad()
 
         roadLineOffsets[y] = { curveOffset = curveOffset, skew = skew }
 
+        if currentScene != nil and currentScene.floorSspr then
+            sspr(currentScene.floorSspr, texCoord,
+                 8, 1,
+                 64 + skew + curveOffset, y,
+                 width * 2, 1)
+            sspr(currentScene.floorSspr, texCoord,
+                 8, 1,
+                 64 + (skew + curveOffset - width * 2), y,
+                 width * 2, 1, true)
+        end
+
         local ySeg = getSeg(track, car.pos + z * 7, false) -- i don't know why 7 works here
         if ySeg != nil and ySeg.seg.isFinish then
             palt(0, false)
@@ -410,20 +441,32 @@ function drawRoad()
                     local xpos2 = (width/2) - 64
                     local height = hazard.height * scale * 2
                     local width = hazard.width * scale * 2
-                    if hazard.palt != nil then
-                        palt(hazard.palt, true)
-                        palt(0, false)
+
+                    local drawLeft = false
+                    local drawRight = false
+                    if name != 'turnSign' then
+                        if hazard.oneSide then
+                            local r = (ySeg.seg.length % 10) > 5
+                            drawLeft = r
+                            drawRight = not r
+                        else
+                            drawLeft = true
+                            drawRight = true
+                        end
+                    else
+                        if ySeg.seg.dir == SEG_LEFT then drawLeft = true end
+                        if ySeg.seg.dir == SEG_RIGHT then drawRight = true end
                     end
 
-                    if name != 'turnSign' or ySeg.seg.dir == SEG_LEFT then
+                    if drawLeft then
                         drawAndCheckHazard(hazard,
                             xpos1 + skew + curveOffset, y-height,
-                            width, height, false, true)
+                            scale, true)
                     end
-                    if name != 'turnSign' or ySeg.seg.dir == SEG_RIGHT then
+                    if drawRight then
                         drawAndCheckHazard(hazard,
                             (skew + curveOffset) - xpos2 - width, y-height,
-                            width, height, true, false)
+                            scale, false)
                     end
                     palt()
                 end
@@ -449,25 +492,51 @@ function drawRoad()
     end
 end
 
-function drawAndCheckHazard(hazard, dx, dy, dw, dh, fliph, isLeft)
+function drawHazard(hazard, dx, dy, dw, dh, isLeft)
     if hazard.heightScale != nil then
         dy -= dh * (hazard.heightScale - 1)
         dh *= hazard.heightScale
     end
+
     if hazard.widthScale != nil then
         if not isLeft then
             dx -= dw * (hazard.widthScale - 1)
         end
         dw *= hazard.widthScale
     end
-    sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx, dy, dw, dh, fliph)
-    if hazard.double and isLeft then
-        sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx + dw + 2, dy, dw, dh, fliph)
-    elseif hazard.double and not isLeft then
-        sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx - dw - 2, dy, dw, dh, fliph)
+
+    if hazard.palt then
+        palt(0, false)
+        palt(hazard.palt, true)
     end
+    sspr(hazard.sx, hazard.sy, hazard.width, hazard.height, dx, dy, dw, dh, not isLeft)
+    if hazard.palt then
+        palt(0, true)
+        palt(hazard.palt, false)
+    end
+end
+
+function drawAndCheckHazard(hazard, dx, dy, scale, isLeft)
+    scale *= 2 -- ???
+    local dblHazard = HAZARDS[hazard.doubleName]
+    if dblHazard then
+        if isLeft then
+            drawHazard(dblHazard,
+                       dx + (hazard.width * hazard.widthScale * scale) + 2, dy,
+                       dblHazard.width * scale, dblHazard.height * scale,
+                       isLeft)
+        else
+            drawHazard(dblHazard,
+                       dx - (hazard.width * hazard.widthScale * scale) - 2, dy,
+                       dblHazard.width * scale, dblHazard.height * scale,
+                       isLeft)
+        end
+    end
+
+    drawHazard(hazard, dx, dy, hazard.width * scale, hazard.height * scale, isLeft)
+
     -- only check the one closest to the road
-    if dy + dh >= 110 then
+    if dy + (hazard.height * scale) >= 110 then
         local x = -8
         if isLeft then
             x = 136
@@ -647,7 +716,11 @@ end
 function drawBackground()
     if currentScene != nil then
         for k, v in pairs(currentScene.pal) do
-            pal(k, v)
+            local col = v
+            if type(v) == 'function' then
+                col = v()
+            end
+            pal(k, col)
         end
     end
 
@@ -667,11 +740,54 @@ end
 function drawDriveText()
     local width = 32
     local height = 10
-    wigglySspr(38, 96, width, height, 64 - width/2, 42)
+    local x = 40
+    local y = 56
+    pal(8, getFlashingCol(8, 9))
+    -- D
+    sspr(64, 80, 10, 16, x, y)
+    x += 12
+    -- R
+    sspr(75, 80, 10, 16, x, y)
+    x += 12
+    -- I
+    sspr(106, 80, 2, 16, x, y)
+    x += 4
+    -- V
+    sspr(109, 80, 10, 16, x, y)
+    x += 12
+    -- E
+    sspr(86, 80, 8, 16, x, y)
+    x += 10
+
+    pal()
+end
+
+function drawReadyText()
+    local width = 32
+    local height = 10
+    local x = 36
+    local y = 56
+    -- R
+    sspr(75, 80, 10, 16, x, y)
+    x += 12
+    -- E
+    sspr(86, 80, 8, 16, x, y)
+    x += 10
+    -- A
+    sspr(95, 80, 10, 16, x, y)
+    x += 12
+    -- D
+    sspr(64, 80, 10, 16, x, y)
+    x += 12
+    -- Y
+    sspr(72, 96, 10, 16, x, y)
+    x += 12
+
+    -- wigglySspr(38, 96, width, height, 64 - width/2, 42)
 end
 
 function drawGameOverText()
-    local width = 100
+    local width = 101
     local height = 15
     local y = 32 - height/2
     pal(7, 10)
@@ -733,9 +849,17 @@ function wigglySspr(sx, sy, sw, sh, dx, dy)
     local slices = flr(sw/sliceWidth)
     for i = 0, slices do
         local yOffset = sin(i / slices + (-frame/16)) * 2
-        sspr(sx + i * sliceWidth, sy,
-            sliceWidth, sh,
-            dx + (i * sliceWidth), dy + yOffset)
+        local x = sx + i * sliceWidth
+        if x + sliceWidth >= sx + sw then
+            local extra = (x + sliceWidth) - (sx + sw)
+            sspr(sx + i * sliceWidth, sy,
+                sliceWidth - extra, sh,
+                dx + (i * sliceWidth), dy + yOffset)
+        else
+            sspr(sx + i * sliceWidth, sy,
+                sliceWidth, sh,
+                dx + (i * sliceWidth), dy + yOffset)
+        end
     end
 end
 
@@ -752,7 +876,7 @@ function generateTrack(segCount)
             -- prefer curve if straight, prefer straight if curve
             local shouldChangeCurve = 75 > rnd(100)
             local nextDir = prevSeg.dir
-            local nextAngle = rnd(50) + 10
+            local nextAngle = min(70, rnd(50) + 10 + rnd(totalSegsGenerated/10))
             if shouldChangeCurve then
                 if prevSeg.dir != SEG_STRAIGHT then
                     nextDir = 0
@@ -765,9 +889,51 @@ function generateTrack(segCount)
             newSeg = createSeg(i, 100 + flr(rnd(250)), nextDir, nextAngle)
         end
         add(track, newSeg)
+        totalSegsGenerated += 1
     end
     return addHazards(track)
 end
+
+function createSeg(id, length, direction, angle)
+    return {
+        id=id,
+        length=length,
+        dir=direction,
+        angle=angle,
+        hazards={},
+    }
+end
+
+function getSeg(track, pos, remove)
+    local sum = trackOffset
+    local itemsToRemove = {}
+    local foundSeg = nil
+    for i = 1, #track  do
+        local seg = track[i]
+        if pos > sum and pos < (sum + seg.length) then
+            foundSeg = {
+                seg=seg,
+                segPos=pos - sum,
+                totalPos=(sum + seg.length) - pos
+            }
+            break
+        elseif remove then
+            itemsToRemove[i] = sum + seg.length
+        end
+        sum += seg.length
+    end
+
+    -- remove segs behind the car
+    for k, v in pairs(itemsToRemove) do
+        -- using del here because in theory there's only ever one thing in
+        -- itemsToRemove
+        trackOffset = v
+        del(track, track[k])
+    end
+
+    return foundSeg
+end
+
 
 -- for real why is lua so bad
 -- HAZARD_NAMES = {'turnSign', 'lamp', 'corn', 'cactus', 'sign'}
@@ -814,23 +980,67 @@ HAZARDS = {
         sy = 32,
         width = 16,
         height = 32,
-        density = 16,
-        heightScale = 4,
-        widthScale = 2,
-        double = true,
+        density = 20,
+        heightScale = 5,
+        widthScale = 3,
+        doubleName = 'building',
     },
+    neon = {
+        sx = 96,
+        sy = 32,
+        width = 16,
+        height = 32,
+        density = 24,
+        heightScale = 3,
+        widthScale = 3,
+        doubleName = 'building',
+        palt = 11,
+    },
+    corpse = {
+        sx = 112,
+        sy = 48,
+        width = 8,
+        height = 16,
+        density = 64,
+        heightScale = 2,
+        widthScale = 2,
+    },
+    fire = {
+        sx = 112,
+        sy = 40,
+        width = 8,
+        height = 8,
+        density = 16,
+        heightScale = 3,
+        widthScale = 2,
+        doubleName = 'fire',
+    },
+    not_doomguy = {
+        sx = 64,
+        sy = 16,
+        width = 16,
+        height = 16,
+        density = 128,
+        heightScale = 2,
+        widthScale = 2,
+        oneSide = true,
+    }
 }
 
 function addHazards(track)
     local pos = trackOffset
+    local carPos = car.pos - trackOffset
+    printh('-----')
     for seg in all(track) do
-        local sharpness = (seg.angle * 2) / seg.length
+        local sharpness = (seg.angle * 3) / seg.length
+        printTable(seg, printh)
+        printh(sharpness)
         if seg.dir != SEG_STRAIGHT and sharpness > 0.6 then
             seg.hazards = { 'turnSign' }
         else
             local hazardNames = nil
             for scene in all(SCENES) do
-                if car.pos > scene.pos then
+                if (pos + carPos + seg.length) > scene.pos then
                     hazardNames = scene.hazards
                 end
             end
@@ -841,49 +1051,8 @@ function addHazards(track)
             end
         end
         pos += seg.length
-        printTable(seg, printh)
     end
     return track
-end
-
-function createSeg(id, length, direction, angle)
-    return {
-        id=id,
-        length=length,
-        dir=direction,
-        angle=angle,
-        hazards={},
-    }
-end
-
-function getSeg(track, pos, remove)
-    local sum = trackOffset
-    local itemsToRemove = {}
-    local foundSeg = nil
-    for i = 1, #track  do
-        local seg = track[i]
-        if pos > sum and pos < (sum + seg.length) then
-            foundSeg = {
-                seg=seg,
-                segPos=pos - sum,
-                totalPos=(sum + seg.length) - pos
-            }
-            break
-        elseif remove then
-            itemsToRemove[i] = sum + seg.length
-        end
-        sum += seg.length
-    end
-
-    -- remove segs behind the car
-    for k, v in pairs(itemsToRemove) do
-        -- using del here because in theory there's only ever one thing in
-        -- itemsToRemove
-        trackOffset = v
-        del(track, track[k])
-    end
-
-    return foundSeg
 end
 
 -- TODO give states real names
@@ -892,11 +1061,6 @@ EVT_STATE_1 = 2
 EVT_STATE_SUCCESS = 3
 EVT_STATE_FAILURE = 4
 
---[[
-  2
-0   1    4 5
-  3
-]]
 U = 2
 D = 3
 L = 0
@@ -910,8 +1074,16 @@ EVENTS = {
         failure = {
             message = 'you spilled it everywhere!!',
             timer = 30,
-            action = function()
-                car.direction = 1
+            action = function(timer)
+                if car.direction != 0 then
+                    car.direction = -car.curSeg.seg.dir
+                else
+                    if timer < 15 then
+                        car.direction = -1
+                    else
+                        car.direction = 1
+                    end
+                end
                 car.paletteSwap[12] = 9
             end
         }
@@ -923,9 +1095,9 @@ EVENTS = {
         timer = 90,
         failure = {
             message = 'dang kids!!',
-            timer = 30,
-            action = function()
-                if frame % 14 < 7 then
+            timer = 60,
+            action = function(timer)
+                if timer % 20 < 10 then
                     car.paletteSwap[12] = 14
                     car.direction = -1
                 else
@@ -1003,6 +1175,7 @@ function makeEventFsm()
                 else
                     fsm.state = EVT_STATE_IDLE
                     fsm.timer = 50 + rnd(100) + max(0, 200 - fsm.eventCounter*30)
+                    printh(fsm.timer)
                     fsm.event = nil
                     fsm.combo = {}
                 end
@@ -1011,7 +1184,7 @@ function makeEventFsm()
             if fsm.state == EVT_STATE_FAILURE then
                 if fsm.failureTimer > 0 then
                     fsm.failureTimer -= 1
-                    fsm.failure.action()
+                    fsm.failure.action(fsm.failureTimer)
                 end
             end
         end
@@ -1055,10 +1228,14 @@ function makeEventFsm()
     return fsm
 end
 
-function getFlashingCol()
-    if (frame % 4) <= 1 then
+function getFlashingCol(a, b, sc)
+    local scale = 1
+    if sc then scale = sc end
+    if ((frame * scale) % 4) <= 1 then
+        if b then return b end
         return COL_TEXT_FLASH
     end
+    if a then return a end
     return COL_TEXT
 end
 
@@ -1111,6 +1288,14 @@ function formatTable(tbl)
         end
     end
     return '{ ' .. output .. ' }'
+end
+
+function xorshift(a)
+    -- wait i dont even need this...
+    a = bxor(a, shl(a, 13))
+    a = bxor(a, shr(a, 17))
+    a = bxor(a, shl(a, 5))
+    return a
 end
 
 track = generateTrack(4)
