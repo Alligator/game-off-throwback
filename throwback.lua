@@ -19,6 +19,7 @@ SPR_MID_BG = 64
 SFX_CAR_CHANNEL = 2
 SFX_CHANNEL = 3
 SFX_CRASH = 4
+SFX_PICKUP = 11
 
 INIT_TIMER = 60
 DRIVE_TEXT_TIMER = 40
@@ -45,30 +46,43 @@ SEG_LEFT = -1
 
 SCENES = {
     { -- fields
+        id = 'fields',
         length = 2000,
         pal = {},
         hazards = { 'corn', 'sign' },
         events = {'beer', 'kids' },
     },
     { -- desert
+        id = 'desert',
         length = 3000,
         pal = { [COL_GROUND] = 15 },
         hazards = { 'cactus', 'cactus', 'sign' },
-        events = { 'beer', 'kids', 'sports' },
+        events = { 'beer', 'kids', 'sports', 'groove' },
     },
     { -- dusk
+        id = 'dusk',
         length = 1000,
         pal = { [COL_GROUND] = 4, [COL_SKY] = 2 },
         hazards = { 'cactus', 'lamp', 'sign' },
-        events = { 'kids', 'sports', 'cigs' },
+        events = { 'kids', 'sports', 'cigs', 'groove' },
     },
     { -- city
+        id = 'city',
         length = 3000,
         pal = { [COL_GROUND] = 1, [COL_SKY] = 0 },
         hazards = { 'building', 'neon', 'lamp' },
-        events = { 'kids', 'cigs' },
+        events = { 'kids', 'cigs', 'pee' },
+    },
+    { -- candyland
+        id = 'candyLand',
+        length = 3000,
+        pal = { [COL_GROUND] = 14, [COL_SKY] = 7 },
+        floorSspr = 48,
+        hazards = { 'candyCane', 'lolly' },
+        events = { 'pee', 'foreboding' },
     },
     { -- gates of hell
+        id = 'gates',
         length = 3000,
         pal = { [COL_GROUND] = 8, [COL_SKY] = 2 },
         floorSspr = 40,
@@ -76,28 +90,32 @@ SCENES = {
         events = { 'remorse' },
     },
     { -- hell
-        length = 4000,
+        id = 'hell',
+        length = 5000,
         pal = { [COL_GROUND] = 10, [COL_SKY] = 8 },
         floorSspr = 32,
         hazards = { 'corpse', 'fire', 'not_doomguy' },
-        events = { 'fire', },
+        events = { 'fire', 'repent' },
     },
     { -- purgatory
+        id = 'purgatory',
         length = 3000,
         pal = { [COL_GROUND] = 5, [COL_SKY] = 6 },
         hazards = {},
         events = { 'nothing', },
     },
-    { -- i guess the gates of heaven are rainbow road???
-        length = 3000,
-        pal = { [COL_GROUND] = 14, [COL_SKY] = 7 },
-        floorSspr = 48,
-        hazards = { 'heavenlyGate', },
-        events = {},
+    { -- heaven
+        id = 'heaven',
+        length = 4000,
+        pal = { [COL_GROUND] = 7 },
+        floorSspr = 56,
+        hazards = { 'heavenlyGate' },
+        events = { 'peace' },
     },
     {
+        id = 'ascention',
         length = 1000,
-        pal = { [COL_GROUND] = 14, [COL_SKY] = 7 },
+        pal = { [COL_GROUND] = 7 },
         hazards = {},
         events = {},
         noCurves = true,
@@ -108,6 +126,7 @@ SCENES = {
 frame = 0
 driveTextTimer = 0
 gameOverTimer = 0
+gameOverStartFrame = nil
 ascendTimer = 0
 fadeTimer = 0
 currentScene = SCENES[1]
@@ -214,6 +233,8 @@ car = {
 function _init()
     cls()
     music(1)
+    track = generateTrack(SCENES[1], 0)
+    track.generatedScenes = { [SCENES[1].id] = true }
 end
 
 function _draw()
@@ -256,8 +277,9 @@ function _draw()
         -- drawFinishText()
     elseif gameState == STATE_ASCENDED then
         if fadeTimer > FADE_TIMER then
-            completed = true
+            gameOverStartFrame = frame
             gameState = STATE_GAME_OVER
+            sfx(-1, SFX_CAR_CHANNEL)
         else
             drawBackground()
             drawRoad()
@@ -266,7 +288,7 @@ function _draw()
         end
     end
 
-    -- print(stat(1), 0, 0, 7)
+    print(stat(1), 0, 0, 7)
 
     frame += 1
 end
@@ -301,28 +323,38 @@ function _update()
             driveTextTimer -= 1
         end
 
-        -- generate more track if we're near the end
-        if car.curSeg and car.curSeg.seg == track[#track - 1] then
+        checkScene = findScene(car.pos + 400) -- check if we're near the end of a scene
+        currentScene = findScene(car.pos)
+
+        if checkScene != currentScene and not track.generatedScenes[checkScene.id] then
             local totalTrackOffset = trackOffset
             for seg in all(tracK) do
                 totalTrackOffset += seg.length
             end
-            local newTrack = generateTrack(3, totalTrackOffset)
+            local newTrack = generateTrack(checkScene, totalTrackOffset)
             local offset = #track
             for i = 1, #newTrack do
                 track[offset + i] = newTrack[i]
             end
+            track.generatedScenes[checkScene.id] = true
         end
-        currentScene = findScene(car.pos)
     elseif gameState == STATE_FINISHED then
+        sfx(0, SFX_CAR_CHANNEL)
         eventFsm.update()
+        updateCar()
+
         if ascendTimer > 1 then
             ascendTimer -= 1
         else
             gameState = STATE_ASCENDED
         end
     elseif gameState == STATE_ASCENDED then
+        updateCar()
 		fadeTimer += 1
+    elseif gameState == STATE_GAME_OVER then
+        if frame - gameOverStartFrame > 120 and btnp(4) then
+            run()
+        end
     end
 
     for item in all(updateq) do
@@ -343,14 +375,18 @@ function updateTimer()
             eventFsm.clear()
             eventFsm.trigger('ascend')
         else
+            gameOverStartFrame = frame
             gameState = STATE_GAME_OVER
+            sfx(-1, SFX_CAR_CHANNEL)
         end
-        sfx(-1, SFX_CAR_CHANNEL)
     elseif timer <= 0 then
         gameOverTimer = GAME_OVER_TIMER
         timer = 0
     elseif currentScene.isFinish then
+        completed = true
+        eventFsm.clear()
         gameOverTimer = GAME_OVER_TIMER
+        music(2)
     else
         timer -= 1/30
     end
@@ -376,6 +412,7 @@ function updatePowerUps()
                 pup:onPickup()
                 pup.collected = true
                 pup.collectedTimer = PICKUP_COLLECTED_TIMER
+                sfx(SFX_PICKUP, SFX_CHANNEL)
             elseif pup.pos - car.pos < 0 then
                 del(powerups, pup)
             end
@@ -419,11 +456,18 @@ end
 function updateCar()
     local rpm = (car.speed % (car.maxSpeed/3 + 1)) + car.speed / 5
     poke(0x3200, bor(rpm * 0.45, 0x40))
-    poke(0x3200 + 1, 0x7)
+    poke(0x3200 + 1, 0x5)
     poke(0x3200 + 2, bor(rpm * 0.65, 0xc0))
-    poke(0x3200 + 3, 0x4)
+    poke(0x3200 + 3, 0x2)
 
     add(updateq, car)
+
+    if completed then
+        car.accelerating = true
+        car.braking = false
+        car.direction = 0
+        return
+    end
 
     if gameOverTimer > 0 then
         car.accelerating = false
@@ -457,7 +501,6 @@ function drawRoad()
         local skew = (64 - (car.xpos + 8)) * scale
         local margin = (128 - width) / 2
         local texCoord = (z * 8 + car.pos) % 8
-        local ySeg = getSeg(track, car.pos + z * 8, false) -- i don't know why 7 works here
 
         local curveOffset = 0
         if curSeg != nil and curSeg.seg.dir != SEG_STRAIGHT then
@@ -470,6 +513,7 @@ function drawRoad()
 
         local proj = car.pos + z * 8
         local yScene = findScene(proj)
+        local ySeg = getSeg(track, proj, false) -- i don't know why 7 works here
 
         if yScene != nil and yScene.floorSspr then
             sspr(yScene.floorSspr, texCoord,
@@ -693,14 +737,21 @@ function drawSpeed()
 end
 
 function drawTimer()
-    drawBigNumberShadowed(flr(timer), 64, 6)
+    if pget(64, 0) == 7 then
+        drawBigNumberShadowed(flr(timer), 64, 6, false, 14)
+    else
+        drawBigNumberShadowed(flr(timer), 64, 6)
+    end
 end
 
-function drawBigNumberShadowed(num, x, y, align)
+function drawBigNumberShadowed(num, x, y, align, col)
+    local colour = col or 7
     pal(7, 2)
     drawBigNumber(num, x, y+1, align)
     pal()
+    pal(7, colour)
     drawBigNumber(num, x, y, align)
+    pal()
 end
 
 function drawBigNumber(num, x, y, align)
@@ -784,7 +835,8 @@ function drawAttract()
 
     local textY = 84
     printShadowed('press z to start', 64, textY, getFlashingCol())
-    printShadowed('Z: ACCELERATE X: BRAKE', 64, textY + 10, 9)
+    printShadowed('accelerate: \x8e brake: \x97', 64, textY + 10, 10)
+    printShadowed('\x98 alligator 2017 \x98', 64, textY + 34, 9)
 end
 
 function drawBackground()
@@ -941,13 +993,13 @@ function wigglySspr(sx, sy, sw, sh, dx, dy)
     end
 end
 
-function generateTrack(segCount, offset)
+function generateTrack(scene, offset)
     local track = {}
+    local totalLength = 0
     local pos = offset or 0
-    for i = 1, segCount do
+    while true do
         -- don't repeat the same anything twice in a row
         local newSeg
-        local scene = findScene(pos)
         if #track == 0 or scene.noCurves then
             newSeg = createSeg(i, 100 + flr(rnd(100)), SEG_STRAIGHT, 0)
         else
@@ -967,11 +1019,20 @@ function generateTrack(segCount, offset)
             end
             newSeg = createSeg(i, 100 + flr(rnd(250)), nextDir, nextAngle)
         end
+        if totalLength + newSeg.length >= scene.length then
+            -- this seg would spill over into the next scene, bung a straight
+            -- one on there and call it a day
+            newSeg = createSeg(i, scene.length - totalLength, SEG_STRAIGHT, 0)
+            add(track, newSeg)
+            break
+        end
         add(track, newSeg)
+
         totalSegsGenerated += 1
         pos += newSeg.length
+        totalLength += newSeg.length
     end
-    return addHazards(track, offset)
+    return addHazards(scene, track, offset)
 end
 
 function createSeg(id, length, direction, angle)
@@ -1137,6 +1198,22 @@ HAZARDS = {
         heightScale = 2,
         widthScale = 2,
     },
+    candyCane = {
+        sx = 104,
+        sy = 0,
+        width = 8,
+        height = 32,
+        density = 64,
+    },
+    lolly = {
+        sx = 80,
+        sy = 16,
+        width = 8,
+        height = 16,
+        density = 32,
+        widthScale = 2,
+        heightScale = 2,
+    },
     heavenlyGate = {
         sx = 0,
         sy = 8,
@@ -1155,24 +1232,21 @@ HAZARDS = {
     }
 }
 
-function addHazards(track, offset)
+function addHazards(scene, track, offset)
     -- printh('------')
     local pos = offset or 0
+    printh('---- ' .. scene.id .. ' ----')
     for seg in all(track) do
         local sharpness = (seg.angle * 3) / seg.length
-        -- printTable({ pos=pos }, printh)
         if seg.dir != SEG_STRAIGHT and sharpness > 0.6 then
             seg.hazards = { 'turnSign' }
         else
-            local scene = findScene(pos + seg.length)
-            -- printTable(scene, printh)
             if scene and scene.hazards  then
                 local name = scene.hazards[flr(rnd(#scene.hazards)) + 1] -- skip the first one
                 seg.hazards = { name }
             end
         end
-        -- printTable(seg, printh)
-        -- printh('--')
+        printTable(seg, printh)
         pos += seg.length
     end
     return track
@@ -1196,7 +1270,7 @@ EVENT_ARROW_COLOURS = {
 }
 EVENTS = {
     beer = {
-        pattern = {R, D, U, U},
+        pattern = {R, D, R, U},
         name = 'your beer ran out!!',
         messages = {'toss it', 'grab it', 'crack it', 'chug it'},
         timer = 90,
@@ -1218,9 +1292,9 @@ EVENTS = {
         }
     },
     kids = {
-        pattern = {D, L, R, L},
+        pattern = {U, L, R, L},
         name = 'the kids are makin\' noise!!',
-        messages = {'yell', 'shout' ,'holler', 'yell really loud'},
+        messages = {'shout', 'bellow' ,'holler', 'yell really loud'},
         timer = 90,
         failure = {
             message = 'dang kids!!',
@@ -1270,10 +1344,9 @@ EVENTS = {
     fire = {
         pattern = {D, L, U, R},
         name = 'i\'m on fire!!',
-        messages = {'pour', 'beer', 'on', 'me'},
+        messages = {'aaa', 'aaaa', 'aaaaa', 'aaaaaa'},
         timer = 60,
         failure = {
-            -- now this could go downhill
             message = 'aaaaaaaaaa',
             timer = 45,
             action = function(timer)
@@ -1306,7 +1379,7 @@ EVENTS = {
         messages = {'nothing', 'nothing', 'nothing', 'nothing'},
         timer = 120,
         failure = {
-            message = 'emptiness',
+            message = '\x8c emptiness \x8c',
             timer = 90,
             action = function(timer)
                 car.paletteSwap[12] = 5
@@ -1314,10 +1387,90 @@ EVENTS = {
             end
         },
     },
+    pee = {
+        pattern = {L, R, L, R},
+        name = 'i need to pee!!',
+        messages = {'hold', 'it', 'hold', 'it'},
+        timer = 60,
+        failure = {
+            message = 'dang crab juice!!',
+            timer = 30,
+            action = function(timer, frame)
+                if frame % 10 > 5 then
+                    car.direction = -1
+                else
+                    car.direction = 1
+                end
+            end
+        },
+    },
+    groove = {
+        pattern = {R, R, R, L},
+        name = 'i slid out of my butt groove!!',
+        messages = {'shimmy', 'slide', 'shimmy', 'shimmy'},
+        failure = {
+            message = 'oh no the ridges!!',
+            timer = 60,
+            action = function(timer)
+                if timer % 20 < 10 then
+                    car.direction = -1
+                else
+                    car.direction = 1
+                end
+            end
+        }
+    },
+    foreboding = {
+        pattern = {R, L, R, L},
+        name = 'i have a sense of foreboding!!',
+        messages = {'i\'m', 'sure', 'it\'s', 'nothing'},
+        timer = 90,
+        failure = {
+            message = 'this doesn\'t bode well!!',
+            timer = 30,
+            action = function()
+                car.braking = true
+            end
+        },
+    },
+    peace = {
+        pattern = {L, U, U, R},
+        name = 'i feel at peace!!',
+        messages = {'there is', 'no need', 'to be', 'upset'},
+        timer = 90,
+        failure = {
+            message = 'still at peace!!',
+            timer = 60,
+            action = function() end
+        },
+    },
+    repent = {
+        pattern = {U, D, U, D},
+        name = 'i want to repent!!',
+        messages = {'please', 'i', 'am', 'sorry'},
+        timer = 90,
+        failure = {
+            message = 'help',
+            timer = 30,
+            action = function(timer)
+                car.braking = true
+                -- is this a good idea
+                -- turns out no, unless i wanna redo track generation
+                --[[
+                for scene in all(SCENES) do
+                    if scene.id == 'hell' then
+                        scene.length += 500
+                        printTable(scene, printh)
+                    end
+                end
+                ]]
+            end
+        },
+    },
     ascend = {
         pattern = {U, U, U, U},
         name = 'hello i am peter',
-        messages = {'hello', 'i', 'am', 'dad'},
+        messages = {'hello peter', 'i', 'am', 'dad'},
         timer = nil,
         failure = { timer = 0 },
     },
@@ -1504,23 +1657,21 @@ function printTable(tbl, cb)
     end
 end
 
-function formatTable(tbl, prefix)
+function formatTable(tbl)
     local output = ''
-    local pfx = prefix or ' '
     for k, v in pairs(tbl) do
-        output = output .. pfx .. k .. ': '
+        output = output .. k .. ': '
         if type(v) == 'string' or type(v) == 'number' then
             output = output .. v .. ' '
         elseif type(v) == 'boolean' then
             output = output .. (v and 'T' or 'F') .. ' '
         elseif type(v) == 'table' then
-            output = output .. formatTable(v, pfx .. '  ') .. ' '
+            output = output .. formatTable(v) .. ' '
         else
             output = output .. '? '
         end
-        output = output .. '\\n'
     end
-    return '\\n' .. output
+    return '{ ' .. output .. '}'
 end
 
 function xorshift(a)
@@ -1531,7 +1682,7 @@ function xorshift(a)
     return a
 end
 
-track = generateTrack(4)
+-- track = generateTrack(4)
 
 fadetable={
   {0,5,5,5,6,6,7},

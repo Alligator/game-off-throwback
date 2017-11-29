@@ -1,19 +1,23 @@
-add more events to the gates of hell, hell and heaven
-ugh still getting the wrong hazards in segs
-add a regular ass heaven scene w/ blue sky n white floor
-make current heaven candy land with candy canes n shit?
+powerup sound
+add more events to the gates of hell, hell and heaven -- i kinda like the one event scenes
+x add name to title screen
+x balance the events i guess -- ehh kinda
+x ugh still getting the wrong hazards in segs
+x add a regular ass heaven scene w/ blue sky n white floor
+x make current heaven candy land with candy canes n shit?
+x ending music
 x pickup detection is weird/inconsistent
 x the beer event always moves you to the right if you fail
 stuff is still flickery -- don't care
 x transition from the title to in game is still ropey
 x signs aren't being placed on sharp curves - seems to favour short corners?
-speed is hard to read sometimes -- especially in heaven
+x speed is hard to read sometimes -- especially in heaven
 too easy to get more time -- ehhhh not really
 x game ending when an event failure is happening might get weird - seems fine, the FSM for events just stops updating, could stop drawing it?
 x events should change as time progresses
 x arrows are hard to read against the hell background
 x need some better last chances to get time
-can't reset
+x can't reset
 x need some sort of indication that a time powerup is coming
 add a text notification when you hit stuff "dang building!!", "dang cactus!!"
 timer flashes something other than 0 when it runs out

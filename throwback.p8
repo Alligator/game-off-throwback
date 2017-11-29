@@ -22,6 +22,7 @@ SPR_MID_BG = 64
 SFX_CAR_CHANNEL = 2
 SFX_CHANNEL = 3
 SFX_CRASH = 4
+SFX_PICKUP = 11
 
 INIT_TIMER = 60
 DRIVE_TEXT_TIMER = 40
@@ -48,30 +49,43 @@ SEG_LEFT = -1
 
 SCENES = {
     { -- fields
+        id = 'fields',
         length = 2000,
         pal = {},
         hazards = { 'corn', 'sign' },
         events = {'beer', 'kids' },
     },
     { -- desert
+        id = 'desert',
         length = 3000,
         pal = { [COL_GROUND] = 15 },
         hazards = { 'cactus', 'cactus', 'sign' },
-        events = { 'beer', 'kids', 'sports' },
+        events = { 'beer', 'kids', 'sports', 'groove' },
     },
     { -- dusk
+        id = 'dusk',
         length = 1000,
         pal = { [COL_GROUND] = 4, [COL_SKY] = 2 },
         hazards = { 'cactus', 'lamp', 'sign' },
-        events = { 'kids', 'sports', 'cigs' },
+        events = { 'kids', 'sports', 'cigs', 'groove' },
     },
     { -- city
+        id = 'city',
         length = 3000,
         pal = { [COL_GROUND] = 1, [COL_SKY] = 0 },
         hazards = { 'building', 'neon', 'lamp' },
-        events = { 'kids', 'cigs' },
+        events = { 'kids', 'cigs', 'pee' },
+    },
+    { -- candyland
+        id = 'candyLand',
+        length = 3000,
+        pal = { [COL_GROUND] = 14, [COL_SKY] = 7 },
+        floorSspr = 48,
+        hazards = { 'candyCane', 'lolly' },
+        events = { 'pee', 'foreboding' },
     },
     { -- gates of hell
+        id = 'gates',
         length = 3000,
         pal = { [COL_GROUND] = 8, [COL_SKY] = 2 },
         floorSspr = 40,
@@ -79,28 +93,32 @@ SCENES = {
         events = { 'remorse' },
     },
     { -- hell
-        length = 4000,
+        id = 'hell',
+        length = 5000,
         pal = { [COL_GROUND] = 10, [COL_SKY] = 8 },
         floorSspr = 32,
         hazards = { 'corpse', 'fire', 'not_doomguy' },
-        events = { 'fire', },
+        events = { 'fire', 'repent' },
     },
     { -- purgatory
+        id = 'purgatory',
         length = 3000,
         pal = { [COL_GROUND] = 5, [COL_SKY] = 6 },
         hazards = {},
         events = { 'nothing', },
     },
-    { -- i guess the gates of heaven are rainbow road???
-        length = 3000,
-        pal = { [COL_GROUND] = 14, [COL_SKY] = 7 },
-        floorSspr = 48,
-        hazards = { 'heavenlyGate', },
-        events = {},
+    { -- heaven
+        id = 'heaven',
+        length = 4000,
+        pal = { [COL_GROUND] = 7 },
+        floorSspr = 56,
+        hazards = { 'heavenlyGate' },
+        events = { 'peace' },
     },
     {
+        id = 'ascention',
         length = 1000,
-        pal = { [COL_GROUND] = 14, [COL_SKY] = 7 },
+        pal = { [COL_GROUND] = 7 },
         hazards = {},
         events = {},
         noCurves = true,
@@ -111,6 +129,7 @@ SCENES = {
 frame = 0
 driveTextTimer = 0
 gameOverTimer = 0
+gameOverStartFrame = nil
 ascendTimer = 0
 fadeTimer = 0
 currentScene = SCENES[1]
@@ -217,6 +236,8 @@ car = {
 function _init()
     cls()
     music(1)
+    track = generateTrack(SCENES[1], 0)
+    track.generatedScenes = { [SCENES[1].id] = true }
 end
 
 function _draw()
@@ -259,8 +280,9 @@ function _draw()
         -- drawFinishText()
     elseif gameState == STATE_ASCENDED then
         if fadeTimer > FADE_TIMER then
-            completed = true
+            gameOverStartFrame = frame
             gameState = STATE_GAME_OVER
+            sfx(-1, SFX_CAR_CHANNEL)
         else
             drawBackground()
             drawRoad()
@@ -269,7 +291,7 @@ function _draw()
         end
     end
 
-    -- print(stat(1), 0, 0, 7)
+    print(stat(1), 0, 0, 7)
 
     frame += 1
 end
@@ -304,28 +326,38 @@ function _update()
             driveTextTimer -= 1
         end
 
-        -- generate more track if we're near the end
-        if car.curSeg and car.curSeg.seg == track[#track - 1] then
+        checkScene = findScene(car.pos + 400) -- check if we're near the end of a scene
+        currentScene = findScene(car.pos)
+
+        if checkScene != currentScene and not track.generatedScenes[checkScene.id] then
             local totalTrackOffset = trackOffset
             for seg in all(tracK) do
                 totalTrackOffset += seg.length
             end
-            local newTrack = generateTrack(3, totalTrackOffset)
+            local newTrack = generateTrack(checkScene, totalTrackOffset)
             local offset = #track
             for i = 1, #newTrack do
                 track[offset + i] = newTrack[i]
             end
+            track.generatedScenes[checkScene.id] = true
         end
-        currentScene = findScene(car.pos)
     elseif gameState == STATE_FINISHED then
+        sfx(0, SFX_CAR_CHANNEL)
         eventFsm.update()
+        updateCar()
+
         if ascendTimer > 1 then
             ascendTimer -= 1
         else
             gameState = STATE_ASCENDED
         end
     elseif gameState == STATE_ASCENDED then
+        updateCar()
 		fadeTimer += 1
+    elseif gameState == STATE_GAME_OVER then
+        if frame - gameOverStartFrame > 120 and btnp(4) then
+            run()
+        end
     end
 
     for item in all(updateq) do
@@ -346,14 +378,18 @@ function updateTimer()
             eventFsm.clear()
             eventFsm.trigger('ascend')
         else
+            gameOverStartFrame = frame
             gameState = STATE_GAME_OVER
+            sfx(-1, SFX_CAR_CHANNEL)
         end
-        sfx(-1, SFX_CAR_CHANNEL)
     elseif timer <= 0 then
         gameOverTimer = GAME_OVER_TIMER
         timer = 0
     elseif currentScene.isFinish then
+        completed = true
+        eventFsm.clear()
         gameOverTimer = GAME_OVER_TIMER
+        music(2)
     else
         timer -= 1/30
     end
@@ -379,6 +415,7 @@ function updatePowerUps()
                 pup:onPickup()
                 pup.collected = true
                 pup.collectedTimer = PICKUP_COLLECTED_TIMER
+                sfx(SFX_PICKUP, SFX_CHANNEL)
             elseif pup.pos - car.pos < 0 then
                 del(powerups, pup)
             end
@@ -422,11 +459,18 @@ end
 function updateCar()
     local rpm = (car.speed % (car.maxSpeed/3 + 1)) + car.speed / 5
     poke(0x3200, bor(rpm * 0.45, 0x40))
-    poke(0x3200 + 1, 0x7)
+    poke(0x3200 + 1, 0x5)
     poke(0x3200 + 2, bor(rpm * 0.65, 0xc0))
-    poke(0x3200 + 3, 0x4)
+    poke(0x3200 + 3, 0x2)
 
     add(updateq, car)
+
+    if completed then
+        car.accelerating = true
+        car.braking = false
+        car.direction = 0
+        return
+    end
 
     if gameOverTimer > 0 then
         car.accelerating = false
@@ -460,7 +504,6 @@ function drawRoad()
         local skew = (64 - (car.xpos + 8)) * scale
         local margin = (128 - width) / 2
         local texCoord = (z * 8 + car.pos) % 8
-        local ySeg = getSeg(track, car.pos + z * 8, false) -- i don't know why 7 works here
 
         local curveOffset = 0
         if curSeg != nil and curSeg.seg.dir != SEG_STRAIGHT then
@@ -473,6 +516,7 @@ function drawRoad()
 
         local proj = car.pos + z * 8
         local yScene = findScene(proj)
+        local ySeg = getSeg(track, proj, false) -- i don't know why 7 works here
 
         if yScene != nil and yScene.floorSspr then
             sspr(yScene.floorSspr, texCoord,
@@ -696,14 +740,21 @@ function drawSpeed()
 end
 
 function drawTimer()
-    drawBigNumberShadowed(flr(timer), 64, 6)
+    if pget(64, 0) == 7 then
+        drawBigNumberShadowed(flr(timer), 64, 6, false, 14)
+    else
+        drawBigNumberShadowed(flr(timer), 64, 6)
+    end
 end
 
-function drawBigNumberShadowed(num, x, y, align)
+function drawBigNumberShadowed(num, x, y, align, col)
+    local colour = col or 7
     pal(7, 2)
     drawBigNumber(num, x, y+1, align)
     pal()
+    pal(7, colour)
     drawBigNumber(num, x, y, align)
+    pal()
 end
 
 function drawBigNumber(num, x, y, align)
@@ -787,7 +838,8 @@ function drawAttract()
 
     local textY = 84
     printShadowed('press z to start', 64, textY, getFlashingCol())
-    printShadowed('Z: ACCELERATE X: BRAKE', 64, textY + 10, 9)
+    printShadowed('accelerate: \x8e brake: \x97', 64, textY + 10, 10)
+    printShadowed('\x98 alligator 2017 \x98', 64, textY + 34, 9)
 end
 
 function drawBackground()
@@ -944,13 +996,13 @@ function wigglySspr(sx, sy, sw, sh, dx, dy)
     end
 end
 
-function generateTrack(segCount, offset)
+function generateTrack(scene, offset)
     local track = {}
+    local totalLength = 0
     local pos = offset or 0
-    for i = 1, segCount do
+    while true do
         -- don't repeat the same anything twice in a row
         local newSeg
-        local scene = findScene(pos)
         if #track == 0 or scene.noCurves then
             newSeg = createSeg(i, 100 + flr(rnd(100)), SEG_STRAIGHT, 0)
         else
@@ -970,11 +1022,20 @@ function generateTrack(segCount, offset)
             end
             newSeg = createSeg(i, 100 + flr(rnd(250)), nextDir, nextAngle)
         end
+        if totalLength + newSeg.length >= scene.length then
+            -- this seg would spill over into the next scene, bung a straight
+            -- one on there and call it a day
+            newSeg = createSeg(i, scene.length - totalLength, SEG_STRAIGHT, 0)
+            add(track, newSeg)
+            break
+        end
         add(track, newSeg)
+
         totalSegsGenerated += 1
         pos += newSeg.length
+        totalLength += newSeg.length
     end
-    return addHazards(track, offset)
+    return addHazards(scene, track, offset)
 end
 
 function createSeg(id, length, direction, angle)
@@ -1140,6 +1201,22 @@ HAZARDS = {
         heightScale = 2,
         widthScale = 2,
     },
+    candyCane = {
+        sx = 104,
+        sy = 0,
+        width = 8,
+        height = 32,
+        density = 64,
+    },
+    lolly = {
+        sx = 80,
+        sy = 16,
+        width = 8,
+        height = 16,
+        density = 32,
+        widthScale = 2,
+        heightScale = 2,
+    },
     heavenlyGate = {
         sx = 0,
         sy = 8,
@@ -1158,24 +1235,21 @@ HAZARDS = {
     }
 }
 
-function addHazards(track, offset)
+function addHazards(scene, track, offset)
     -- printh('------')
     local pos = offset or 0
+    printh('---- ' .. scene.id .. ' ----')
     for seg in all(track) do
         local sharpness = (seg.angle * 3) / seg.length
-        -- printTable({ pos=pos }, printh)
         if seg.dir != SEG_STRAIGHT and sharpness > 0.6 then
             seg.hazards = { 'turnSign' }
         else
-            local scene = findScene(pos + seg.length)
-            -- printTable(scene, printh)
             if scene and scene.hazards  then
                 local name = scene.hazards[flr(rnd(#scene.hazards)) + 1] -- skip the first one
                 seg.hazards = { name }
             end
         end
-        -- printTable(seg, printh)
-        -- printh('--')
+        printTable(seg, printh)
         pos += seg.length
     end
     return track
@@ -1199,7 +1273,7 @@ EVENT_ARROW_COLOURS = {
 }
 EVENTS = {
     beer = {
-        pattern = {R, D, U, U},
+        pattern = {R, D, R, U},
         name = 'your beer ran out!!',
         messages = {'toss it', 'grab it', 'crack it', 'chug it'},
         timer = 90,
@@ -1221,9 +1295,9 @@ EVENTS = {
         }
     },
     kids = {
-        pattern = {D, L, R, L},
+        pattern = {U, L, R, L},
         name = 'the kids are makin\' noise!!',
-        messages = {'yell', 'shout' ,'holler', 'yell really loud'},
+        messages = {'shout', 'bellow' ,'holler', 'yell really loud'},
         timer = 90,
         failure = {
             message = 'dang kids!!',
@@ -1273,10 +1347,9 @@ EVENTS = {
     fire = {
         pattern = {D, L, U, R},
         name = 'i\'m on fire!!',
-        messages = {'pour', 'beer', 'on', 'me'},
+        messages = {'aaa', 'aaaa', 'aaaaa', 'aaaaaa'},
         timer = 60,
         failure = {
-            -- now this could go downhill
             message = 'aaaaaaaaaa',
             timer = 45,
             action = function(timer)
@@ -1309,7 +1382,7 @@ EVENTS = {
         messages = {'nothing', 'nothing', 'nothing', 'nothing'},
         timer = 120,
         failure = {
-            message = 'emptiness',
+            message = '\x8c emptiness \x8c',
             timer = 90,
             action = function(timer)
                 car.paletteSwap[12] = 5
@@ -1317,10 +1390,90 @@ EVENTS = {
             end
         },
     },
+    pee = {
+        pattern = {L, R, L, R},
+        name = 'i need to pee!!',
+        messages = {'hold', 'it', 'hold', 'it'},
+        timer = 60,
+        failure = {
+            message = 'dang crab juice!!',
+            timer = 30,
+            action = function(timer, frame)
+                if frame % 10 > 5 then
+                    car.direction = -1
+                else
+                    car.direction = 1
+                end
+            end
+        },
+    },
+    groove = {
+        pattern = {R, R, R, L},
+        name = 'i slid out of my butt groove!!',
+        messages = {'shimmy', 'slide', 'shimmy', 'shimmy'},
+        failure = {
+            message = 'oh no the ridges!!',
+            timer = 60,
+            action = function(timer)
+                if timer % 20 < 10 then
+                    car.direction = -1
+                else
+                    car.direction = 1
+                end
+            end
+        }
+    },
+    foreboding = {
+        pattern = {R, L, R, L},
+        name = 'i have a sense of foreboding!!',
+        messages = {'i\'m', 'sure', 'it\'s', 'nothing'},
+        timer = 90,
+        failure = {
+            message = 'this doesn\'t bode well!!',
+            timer = 30,
+            action = function()
+                car.braking = true
+            end
+        },
+    },
+    peace = {
+        pattern = {L, U, U, R},
+        name = 'i feel at peace!!',
+        messages = {'there is', 'no need', 'to be', 'upset'},
+        timer = 90,
+        failure = {
+            message = 'still at peace!!',
+            timer = 60,
+            action = function() end
+        },
+    },
+    repent = {
+        pattern = {U, D, U, D},
+        name = 'i want to repent!!',
+        messages = {'please', 'i', 'am', 'sorry'},
+        timer = 90,
+        failure = {
+            message = 'help',
+            timer = 30,
+            action = function(timer)
+                car.braking = true
+                -- is this a good idea
+                -- turns out no, unless i wanna redo track generation
+                --[[
+                for scene in all(SCENES) do
+                    if scene.id == 'hell' then
+                        scene.length += 500
+                        printTable(scene, printh)
+                    end
+                end
+                ]]
+            end
+        },
+    },
     ascend = {
         pattern = {U, U, U, U},
         name = 'hello i am peter',
-        messages = {'hello', 'i', 'am', 'dad'},
+        messages = {'hello peter', 'i', 'am', 'dad'},
         timer = nil,
         failure = { timer = 0 },
     },
@@ -1507,23 +1660,21 @@ function printTable(tbl, cb)
     end
 end
 
-function formatTable(tbl, prefix)
+function formatTable(tbl)
     local output = ''
-    local pfx = prefix or ' '
     for k, v in pairs(tbl) do
-        output = output .. pfx .. k .. ': '
+        output = output .. k .. ': '
         if type(v) == 'string' or type(v) == 'number' then
             output = output .. v .. ' '
         elseif type(v) == 'boolean' then
             output = output .. (v and 'T' or 'F') .. ' '
         elseif type(v) == 'table' then
-            output = output .. formatTable(v, pfx .. '  ') .. ' '
+            output = output .. formatTable(v) .. ' '
         else
             output = output .. '? '
         end
-        output = output .. '\n'
     end
-    return '\n' .. output
+    return '{ ' .. output .. '}'
 end
 
 function xorshift(a)
@@ -1534,7 +1685,7 @@ function xorshift(a)
     return a
 end
 
-track = generateTrack(4)
+-- track = generateTrack(4)
 
 fadetable={
   {0,5,5,5,6,6,7},
@@ -1567,38 +1718,38 @@ function fade(i)
 end
 
 __gfx__
-7ddddddd55775577bbb44bbbbbb44bbb989aaa9a2828888889abc12e000000008888888888888822200000000005555555555000000000000000000000000000
-7ddddddd55775577bb4774bbbbb474bb9aa9aaaa8288828889abc12e000000008777777788777822200000000056666666666600000000000000000000000000
-7ddddddd77557755b477774b4444774ba99a9aa92828888889abc12e000000008888888888888822200000000055555555555500000000000000000000000000
-7ddddddd7755775547777774477777748a9aaaaa2288288889abc12e000000008888888888888822200000000005666566666000000000000000000000000000
-8dddddd655775577444774444777777499a9aa9a2888888889abc12e000000008888788888888822200000000000566665665000000000000000000000000000
-8dddddd655775577bb4774bb4444774baa9a9aaa8282888889abc12e000000008887778888888822200000000000055555550000000000000000000000000000
-8dddddd677557755bb4774bbbbb474bb98aaaa9a2288882889abc12e00000000887f7f7888878822200000000000055666600000000000000000000000000000
-8dddddd677557755bb4444bbbbb44bbb9a9aaaa92828888889abc12e00000000877f8f77887f7822200000000000056655600000000000000000000000000000
-5000000000000000000000000000000000000000000000000000000000000000777fff7777797766600000000000055655600000000000000000000000000000
-500600000000000000000000000000000000000000000000000000000000000077777777777f7766600000000000055655600000000000000000000000000000
-555500000000000000000000000000000000000000000ffffff00000000000007007707777007766600000000000055355600000000000000000000000000000
-50050000000000000000aaaaaaaa000000000000000ff444444ff000000000007057707777057766600000000000055655600000000000000000000000000000
-55465670000000000aaa77777777aaa0000000000ff4444444444ff0000000007500000077500766600000000000055655500000000000000000000000000000
-5004006000000000a77777777777777a00000000ffffffffffffffff000000007050606077050766600000000000055635600000000000000000000000000000
-50058555000000660aaa77777777aaa00000000ffccccccccccccccff00000007777777777777766600000000000055653600000000000000000000000000000
-50060060560000650000aaaaaaaa00000000000fccccccccccccccccf00000008888888888888822200000000000055655600000000000000000000000000000
-80050066050050550000000000000000000000fccccccccccccccccccf0000000000000000000000000000000000055655300000000000000000000000000000
-50080050565550550000000000000000000000fccc7ccccccccccccccf0000000000055000000000000000000000056655600000000000000000000000000000
-5005006005006055000000000000000000000fccc7ccccccccccccccccf000000000555000000000000000000000055655600000000000000000000000000000
-4005006005554554000000000000000000000fcc77ccccccccccccccccf0000000005490b0000000000000000000055655600000000000000000000000000000
-400600500500505500000000000000000000fcc77ccccccccccccc7ccccf0000000355533b000000000000000000055655600000000000000000000000000000
-400500800600555500000000000000000000fc77ccccccccccccc7cccccf00000033333349000000000000000000055655600000000000000000000000000000
-50050040050050540000000000000000000fffffffffffffffff7ffffffff000003b333bb4900000000000000000056655600000000000000000000000000000
-50050050050040550000000000000000000ffffffffffffffffffffffffff0000049b443b0495000000000000000055655300000000000000000000000000000
-5005004005004055000000000000000000022f44445555555555544444f220000004944400555000000000000000055655600000000000000000000000000000
-5444005005004054000000000000000000022f4444577c7c7c77544444f220000004914300050000000000000000554653600000000000000000000000000000
-5005445005005054000000000000000000022f444447c7c7c7c7444444f220000004111900000000000000000005555666600000000000000000000000000000
-5554005544005054000000000000000000022f44449999999999944444f220000031109a90000080000000000005556665660000000000000000000000000000
-0005554004555044000000000000000000077ffffffffffffffffffffff77000003309a7a9000000000000000005465363566000000000000000000000000000
-0000005555005545000000000000000000066656666666666666666665666000003b009a90008000000000000000564546536000000000000000000000000000
-0000000005555055000000000000000000055555555555555555555555555000000802098008980000000000000056355645b000000000000000000000000000
-0000000000000554000000000000000000000555000000000000000055500000000220222089a90000000000000005345b435000000000000000000000000000
+7ddddddd55775577bbb44bbbbbb44bbb989aaa9a2828888889abc12e777777778888888888888822200000000005555555555000007768000000000000000000
+7ddddddd55775577bb4774bbbbb474bb9aa9aaaa8288828889abc12e777777778777777788777822200000000056666666666600076668800000000000000000
+7ddddddd77557755b477774b4444774ba99a9aa92828888889abc12e7c7777778888888888888822200000000055555555555500766688880000000000000000
+7ddddddd7755775547777774477777748a9aaaaa2288288889abc12e777777778888888888888822200000000005666566666000766008880000000000000000
+8dddddd655775577444774444777777499a9aa9a2888888889abc12e777777778888788888888822200000000000566665665000e8600e860000000000000000
+8dddddd655775577bb4774bb4444774baa9a9aaa8282888889abc12e777777c78887778888888822200000000000055555550000e88006660000000000000000
+8dddddd677557755bb4774bbbbb474bb98aaaa9a2288882889abc12e77777777887f7f7888878822200000000000055666600000e88007660000000000000000
+8dddddd677557755bb4444bbbbb44bbb9a9aaaa92828888889abc12e77777777877f8f77887f7822200000000000056655600000e88007660000000000000000
+5000000000000000000000000000000000000000000000000000000000000000777fff7777797766600000000000055655600000e88007680000000000000000
+500600000000000000000000000000000000000000000000000000000000000077777777777f776660000000000005565560000076600e880000000000000000
+555500000000000000000000000000000000000000000ffffff0000000000000700770777700776660000000000005535560000007000e880000000000000000
+50050000000000000000aaaaaaaa000000000000000ff444444ff00000000000705770777705776660000000000005565560000000000e880000000000000000
+55465670000000000aaa77777777aaa0000000000ff4444444444ff000000000750000007750076660000000000005565550000000000e860000000000000000
+5004006000000000a77777777777777a00000000ffffffffffffffff000000007050606077050766600000000000055635600000000007660000000000000000
+50058555000000660aaa77777777aaa00000000ffccccccccccccccff00000007777777777777766600000000000055653600000000007660000000000000000
+50060060560000650000aaaaaaaa00000000000fccccccccccccccccf00000008888888888888822200000000000055655600000000007660000000000000000
+80050066050050550000000000000000000000fccccccccccccccccccf0000000000000000000000000000000000055655300000000007680000000000000000
+50080050565550550000000000000000000000fccc7ccccccccccccccf000000000005500000000000288800000005665560000000000e880000000000000000
+5005006005006055000000000000000000000fccc7ccccccccccccccccf000000000555000000000028e8e80000005565560000000000e880000000000000000
+4005006005554554000000000000000000000fcc77ccccccccccccccccf0000000005490b0000000288888e8000005565560000000000e880000000000000000
+400600500500505500000000000000000000fcc77ccccccccccccc7ccccf0000000355533b0000002888e888000005565560000000000e860000000000000000
+400500800600555500000000000000000000fc77ccccccccccccc7cccccf00000033333349000000282888e80000055655600000000007660000000000000000
+50050040050050540000000000000000000fffffffffffffffff7ffffffff000003b333bb4900000028288800000056655600000000007660000000000000000
+50050050050040550000000000000000000ffffffffffffffffffffffffff0000049b443b0495000002828000000055655300000000007660000000000000000
+5005004005004055000000000000000000022f44445555555555544444f220000004944400555000000550000000055655600000000006680000000000000000
+5444005005004054000000000000000000022f4444577c7c7c77544444f22000000491430005000000066000000055465360000000000e880000000000000000
+5005445005005054000000000000000000022f444447c7c7c7c7444444f22000000411190000000000076000000555566660000000000e880000000000000000
+5554005544005054000000000000000000022f44449999999999944444f220000031109a9000008000076000000555666566000000000e880000000000000000
+0005554004555044000000000000000000077ffffffffffffffffffffff77000003309a7a9000000000760000005465363566000000008860000000000000000
+0000005555005545000000000000000000066656666666666666666665666000003b009a90008000000760000000564546536000000007660000000000000000
+0000000005555055000000000000000000055555555555555555555555555000000802098008980000076000000056355645b000000007660000000000000000
+0000000000000554000000000000000000000555000000000000000055500000000220222089a90000066000000005345b435000000006660000000000000000
 cccccccc06600000bbbbbbb00bbbbbbb000aa0000aa00000000000000000000000000000000000000055111111111110c1c1c1c1111111110000000000000000
 cccccccc66666000bbbbbb0990bbbbbb00000900900a000000000003bb000000000000000000000055551aaaa11aaaa11aaaaaac1aa110010000000000000000
 3333333309905600bbbbb099990bbbbb000000909000000000000003bf00000000000000000000005555111111111111caa00aa11aa110010000000000000000
@@ -1871,9 +2022,9 @@ __sfx__
 012600003c7353c7253c7153c7253c7153c7153c7353c7253c7153c7253c7153c7153c7353c7253c7153c7253c7153c7153c7353c7253c7153c7253c7153c7150070500705007050070500705007050070500705
 011300000414004145100001000004145100050414510005041450000004145000000413004135091350b1250e135101250e1320e1220e1120e11500000000000000000000000000000000000000000000000000
 0113000023230252112623023225002001f230212251c2021c2321c2221c2221c2121c215000001c2351e22521235232252123221222212122121500000000000000000000000000000000000000000000000000
-001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0128000010722177251c7252072523722207251c7251772510722177251c7252072523722207251c725177250e722157251a7251e725217221e7251a725157250e722157251a7251e725217221e7251a72515725
+0128000017535175251e5351e525235352352527535275252a5352a525275352752523535235251e5351e52517535175251e5351e525215352152528535285252a5352a525285352852521535215251e5351e525
+011000002823224235242152450000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000700
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -1929,7 +2080,7 @@ __sfx__
 __music__
 02 01024344
 03 05060708
-00 41424344
+03 090a4344
 00 41424344
 00 41424344
 00 41424344
