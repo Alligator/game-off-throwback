@@ -1,7 +1,11 @@
 add some stuff in the sky, demons in hell, angels in heaven maybe?
 sound for some of the events (especially kids makin noise)
 add stuff to avoid on the road?
-sound effects on the events (arrows, event complete, event failed)
+
+x sound effects on the events (arrows, event complete, event failed)
+x build up the messages for events so it shows a whole sentence
+x noise when you mess up the arrow combo?
+x put a border on the timer bar
 
 x powerup sound
 add more events to the gates of hell, hell and heaven -- i kinda like the one event scenes

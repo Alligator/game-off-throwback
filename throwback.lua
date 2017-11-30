@@ -1,4 +1,5 @@
--- autocmd BufWritePost <buffer> silent make
+-- 70s dad drivin'
+-- alligator 2017
 PI = 3.14159
 ROAD_HEIGHT = 58
 
@@ -22,6 +23,7 @@ SFX_CRASH = 4
 SFX_PICKUP = 11
 SFX_EVENT_START = 12
 SFX_EVENT_ARROW = 13
+SFX_EVENT_FAIL = 14
 
 INIT_TIMER = 60
 DRIVE_TEXT_TIMER = 40
@@ -290,7 +292,7 @@ function _draw()
         end
     end
 
-    print(stat(1), 0, 0, 7)
+    -- print(stat(1), 0, 0, 7)
 
     frame += 1
 end
@@ -1235,9 +1237,7 @@ HAZARDS = {
 }
 
 function addHazards(scene, track, offset)
-    -- printh('------')
     local pos = offset or 0
-    printh('---- ' .. scene.id .. ' ----')
     for seg in all(track) do
         local sharpness = (seg.angle * 3) / seg.length
         if seg.dir != SEG_STRAIGHT and sharpness > 0.6 then
@@ -1248,7 +1248,6 @@ function addHazards(scene, track, offset)
                 seg.hazards = { name }
             end
         end
-        printTable(seg, printh)
         pos += seg.length
     end
     return track
@@ -1456,16 +1455,6 @@ EVENTS = {
             timer = 30,
             action = function(timer)
                 car.braking = true
-                -- is this a good idea
-                -- turns out no, unless i wanna redo track generation
-                --[[
-                for scene in all(SCENES) do
-                    if scene.id == 'hell' then
-                        scene.length += 500
-                        printTable(scene, printh)
-                    end
-                end
-                ]]
             end
         },
     },
@@ -1517,6 +1506,7 @@ function makeEventFsm()
                 fsm.failureFrame = frame
                 fsm.failureTimer = fsm.failure.timer
                 fsm.timer = 60
+                sfx(SFX_EVENT_FAIL, SFX_CHANNEL)
                 return
             end
 
@@ -1556,11 +1546,9 @@ function makeEventFsm()
     fsm.draw = function()
         local starty = 24
         if fsm.state == EVT_STATE_1 then
-            printShadowed(fsm.event.name, 64, starty+2, 9)
+            printShadowed(fsm.event.name, 64, starty, 9)
 
-            if #fsm.combo < #fsm.event.messages then
-                printShadowed(fsm.event.messages[#fsm.combo + 1], 64, starty+11, getFlashingCol())
-            end
+            starty += 10
 
             -- gordon bennet
             local firstComboChar = true
@@ -1586,14 +1574,44 @@ function makeEventFsm()
                 end
                 palt(0, false)
                 palt(11, true)
-                spr(sprite, 46 + (i - 1) * 9, starty+20, 1, 1, flipx, flipy)
+                spr(sprite, 46 + (i - 1) * 9, starty, 1, 1, flipx, flipy)
                 pal()
                 palt()
             end
 
+            starty += 12
+
+            if #fsm.combo < #fsm.event.messages then
+                for i = 1, #fsm.event.messages, 2 do
+                    local msg1 = fsm.event.messages[i]
+                    local msg1col = 4
+                    if i - 1 == #fsm.combo then
+                        msg1col = getFlashingCol(7, EVENT_ARROW_COLOURS[fsm.event.pattern[i]].light, 0.75)
+                    elseif i <= #fsm.combo then
+                        msg1col = 9
+                    end
+
+                    local msg2 = fsm.event.messages[i + 1]
+                    local msg2col = 4
+                    if i == #fsm.combo then
+                        msg2col = getFlashingCol(7, EVENT_ARROW_COLOURS[fsm.event.pattern[i+1]].light, 0.75)
+                    elseif i + 1 <= #fsm.combo then
+                        msg2col = 9
+                    end
+
+                    local fullLine = msg1 .. '  ' .. msg2
+                    if i == 3 then starty += 9 end
+                    printShadowedLeft(msg1, 64 - #fullLine * 2, starty, msg1col)
+                    printShadowedLeft(msg2, (64 - #fullLine * 2) + #msg1 * 4 + 8, starty, msg2col)
+                end
+            end
+
+            starty += 10
+
             if fsm.timer != nil then
                 local timeLeft = fsm.timer/fsm.event.timer
-                line(46, starty+29, 46 + timeLeft * 36, starty+29)
+                rect(46, starty+1, 46 + timeLeft * 36, starty+2, getFlashingCol())
+                rect(46, starty, 46 + timeLeft * 36, starty+3, 4)
             end
         elseif fsm.state == EVT_STATE_SUCCESS then
             printShadowed('success!!', 64, starty+2, getFlashingCol())
@@ -1640,25 +1658,30 @@ function getFlashingCol(a, b, sc)
     return COL_TEXT
 end
 
-function printShadowed(str, x, y, col)
+function printShadowed(str, x, y, col, cb)
+    local fn = cb or printCentered
     -- jesus
-    printCentered(str, x, y + 2, 2)
-    printCentered(str, x-1, y + 2, 2)
+    fn(str, x, y + 2, 2)
+    fn(str, x-1, y + 2, 2)
 
 
-    printCentered(str, x, y - 1, 4)
-    printCentered(str, x+1, y - 1, 4)
-    printCentered(str, x-1, y - 1, 4)
+    fn(str, x, y - 1, 4)
+    fn(str, x+1, y - 1, 4)
+    fn(str, x-1, y - 1, 4)
 
-    printCentered(str, x+1, y, 4)
-    printCentered(str, x-1, y, 4)
+    fn(str, x+1, y, 4)
+    fn(str, x-1, y, 4)
 
-    printCentered(str, x, y + 1, 4)
-    printCentered(str, x+1, y + 1, 4)
-    printCentered(str, x-1, y + 1, 4)
+    fn(str, x, y + 1, 4)
+    fn(str, x+1, y + 1, 4)
+    fn(str, x-1, y + 1, 4)
 
 
-    printCentered(str, x, y, col)
+    fn(str, x, y, col)
+end
+
+function printShadowedLeft(str, x, y, col)
+    printShadowed(str, x, y, col, print)
 end
 
 function printCentered(str, x, y, col)
