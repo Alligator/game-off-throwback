@@ -1,4 +1,9 @@
-powerup sound
+add some stuff in the sky, demons in hell, angels in heaven maybe?
+sound for some of the events (especially kids makin noise)
+add stuff to avoid on the road?
+sound effects on the events (arrows, event complete, event failed)
+
+x powerup sound
 add more events to the gates of hell, hell and heaven -- i kinda like the one event scenes
 x add name to title screen
 x balance the events i guess -- ehh kinda

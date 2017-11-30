@@ -20,6 +20,8 @@ SFX_CAR_CHANNEL = 2
 SFX_CHANNEL = 3
 SFX_CRASH = 4
 SFX_PICKUP = 11
+SFX_EVENT_START = 12
+SFX_EVENT_ARROW = 13
 
 INIT_TIMER = 60
 DRIVE_TEXT_TIMER = 40
@@ -1476,6 +1478,13 @@ EVENTS = {
     },
 }
 
+SFX_EVENTS = {
+    [L] = 28 + 12,
+    [U] = 32 + 12,
+    [R] = 35 + 12,
+    [D] = 37 + 12,
+}
+
 function makeEventFsm()
     local fsm = {}
 
@@ -1494,9 +1503,6 @@ function makeEventFsm()
                 if eventName then
                     fsm.trigger(eventName)
                 end
-                -- if fsm.eventCounter > 1 then
-                --     fsm.timer *= max(0.5, 1 - fsm.eventCounter/16)
-                -- end
             end
         elseif fsm.state == EVT_STATE_1 then
             if #fsm.combo == #fsm.event.pattern then
@@ -1519,6 +1525,10 @@ function makeEventFsm()
             local nextComboChar = fsm.event.pattern[#fsm.combo + 1]
             if btnp(nextComboChar) then
                 add(fsm.combo, nextComboChar)
+
+                local addr = 0x3200 + 68 * SFX_EVENT_ARROW
+                poke(addr, SFX_EVENTS[nextComboChar])
+                sfx(SFX_EVENT_ARROW, SFX_CHANNEL)
             elseif band(btnp(), 0xF) > 0 then
                 fsm.combo = {}
             end
@@ -1607,6 +1617,13 @@ function makeEventFsm()
         fsm.event = EVENTS[eventName]
         fsm.combo = {}
         fsm.timer = fsm.event.timer
+
+        local addr = 0x3200 + 68 * SFX_EVENT_START
+        for i in all(fsm.event.pattern) do
+            poke(addr, SFX_EVENTS[i])
+            addr += 2
+        end
+        sfx(SFX_EVENT_START, SFX_CHANNEL)
     end
 
     return fsm
